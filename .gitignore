@@ -1,0 +1,15 @@
+# logs / runs
+runs/
+run_model_history/
+
+# python cache
+__pycache__/
+*.pyc
+
+# checkpoints / large files
+*.pth
+*.pt
+*.ckpt
+
+# misc
+.DS_Store
