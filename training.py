@@ -16,7 +16,7 @@ import random
 from torch.utils.tensorboard import SummaryWriter
 base_log_dir = "/home/lc2762/Diffusion_condition/runs/conditional_inpainting"
 
-n_epochs =20  # Number of epochs
+n_epochs =100  # Number of epochs
 batch_size = 64  # Mini-batch size
 lr = 1e-3  # Learning rate
 
@@ -205,17 +205,17 @@ for epoch in tqdm_epoch:
     #y = generate_random_mask(x)
 
 
-
-    samplefig_ode = samples_plt(score_model = score_model, 
+    '''
+   samplefig_ode = samples_plt(score_model = score_model, 
                                 data_loader = data_loader, 
-                                device = device, 
+                               device = device, 
                                 sampler = ode_sampler,
                                 sample_batch_size = batch_size, 
                                 marginal_prob_std_fn = marginal_prob_std_fn, 
                                 diffusion_coeff_fn = diffusion_coeff_fn,
                                 y=y,
                                 x=x)
-
+    '''
     samplefig_pc = samples_plt(score_model = score_model, 
                                 data_loader = data_loader, 
                                 device = device, 
@@ -236,12 +236,12 @@ for epoch in tqdm_epoch:
                                 y=y,
                                 x=x)
 
-    numpy_ode = figure_to_numpy(samplefig_ode)
+    #numpy_ode = figure_to_numpy(samplefig_ode)
     numpy_pc = figure_to_numpy(samplefig_pc)
     numpy_em = figure_to_numpy(samplefig_EM)
 
    # Add to TensorBoard
-    writer.add_image('ode Images', numpy_ode, epoch, dataformats='HWC')
+    #writer.add_image('ode Images', numpy_ode, epoch, dataformats='HWC')
     writer.add_image('PC Images', numpy_pc, epoch, dataformats='HWC')
     writer.add_image('SDE Images', numpy_em, epoch, dataformats='HWC')
    

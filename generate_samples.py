@@ -39,6 +39,8 @@ def Euler_Maruyama_sampler(score_model,
   time_steps = torch.linspace(1., eps, num_steps, device=device)
   step_size = time_steps[0] - time_steps[1]
   x = init_x
+  mask = torch.ones_like(x)
+  mask[:, :, :, 16:] = 0. 
 
   with torch.no_grad():
     for time_step in tqdm.tqdm(time_steps):      
@@ -49,13 +51,20 @@ def Euler_Maruyama_sampler(score_model,
       score = score_model(x, y, batch_time_step)
       
       # Compute the drift term using the conditional score
-      mean_x = x + (g**2)[:, None, None, None] * score * step_size
-      
+      x_mean = x + (g**2)[:, None, None, None] * score * step_size
+      #some lines to calculate conditional term
+      conditional_term = (y*mask - x*mask) / (marginal_prob_std(batch_time_step)[:,None,None,None]**2 + 1e-12)
+      x_mean = x_mean + 0.576568555 * (g**2)[:,None,None,None] * conditional_term * step_size
+
+
       # Add the diffusion term
-      x = mean_x + torch.sqrt(step_size) * g[:, None, None, None] * torch.randn_like(x)
+      x = x_mean + torch.sqrt(step_size) * g[:, None, None, None] * torch.randn_like(x)
       
   # Do not include any noise in the last sampling step.
-  return mean_x
+  return x_mean
+
+
+
 
 
 signal_to_noise_ratio = 0.16
@@ -94,8 +103,11 @@ def pc_sampler(score_model,
   t = torch.ones(batch_size, device=device)
   init_x = torch.randn(batch_size, 1, 28, 28, device=device) * marginal_prob_std(t)[:, None, None, None]
   time_steps = np.linspace(1., eps, num_steps)
-  step_size = time_steps[0] - time_steps[1]
+  step_size = torch.tensor(time_steps[0] - time_steps[1], device=device, dtype=torch.float32)
+
   x = init_x
+  mask = torch.ones_like(x)
+  mask[:, :, :, 16:] = 0. 
 
   with torch.no_grad():
     for time_step in tqdm.tqdm(time_steps):      
@@ -103,6 +115,10 @@ def pc_sampler(score_model,
       
       # Corrector step (Langevin MCMC)
       grad = score_model(x, y, batch_time_step)  # Pass `y` to the score model
+      ##change here
+      conditional_term = (y*mask - x*mask) / (marginal_prob_std(batch_time_step)[:,None,None,None]**2 + 1e-12)
+      grad = grad + 0.576568555 * conditional_term
+      ##
       grad_norm = torch.norm(grad.reshape(grad.shape[0], -1), dim=-1).mean()
       noise_norm = np.sqrt(np.prod(x.shape[1:]))
       langevin_step_size = 2 * (snr * noise_norm / grad_norm)**2
@@ -112,8 +128,17 @@ def pc_sampler(score_model,
       g = diffusion_coeff(batch_time_step)
       score = score_model(x, y, batch_time_step)  # Pass `y` to the score model
       x_mean = x + (g**2)[:, None, None, None] * score * step_size
-      x = x_mean + torch.sqrt(g**2 * step_size)[:, None, None, None] * torch.randn_like(x)      
+
+      #some lines to calculate conditional term
+      conditional_term = (y*mask - x*mask) / (marginal_prob_std(batch_time_step)[:,None,None,None]**2 + 1e-12)
+      x_mean = x_mean + 0.576568555 * (g**2)[:,None,None,None] * conditional_term * step_size
+
+
+      
+      # Add the diffusion term
+      x = x_mean + torch.sqrt(step_size) * g[:, None, None, None] * torch.randn_like(x)
     
+
     # The last step does not include any noise
     return x_mean
 
