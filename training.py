@@ -87,7 +87,7 @@ sigma = 25.0
 marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma)
 diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
 
-
+'''
 def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
   """The loss function for training score-based generative models (Conditional).
 
@@ -110,6 +110,40 @@ def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
   loss = torch.mean(torch.sum((score * std[:, None, None, None] + z)**2, dim=(1, 2, 3)))
   
   return loss
+'''
+
+def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
+  """The loss function for training score-based generative models (Conditional / Joint).
+
+  Args:
+    model: score model, now outputs 2 channels: [B,2,H,W] = (score_x, score_y)
+    x: data image, shape [B,1,H,W]
+    y: conditioning image (will be treated as y0), shape [B,1,H,W]
+    marginal_prob_std: returns std(t), shape [B]
+    eps: numerical stability
+  """
+  random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
+  std = marginal_prob_std(random_t)  # [B]
+
+  #  noise for x and y
+  z_x = torch.randn_like(x)
+  z_y = torch.randn_like(y)
+
+  # perturb BOTH x and y to get (x_t, y_t)
+  perturbed_x = x + z_x * std[:, None, None, None]
+  perturbed_y = y + z_y * std[:, None, None, None]
+
+  # model outputs joint score
+  score_xy = model(perturbed_x, perturbed_y, random_t)   # [B,2,H,W]
+  score_x = score_xy[:, 0:1, :, :]
+  score_y = score_xy[:, 1:2, :, :]
+
+  # VE DSM loss for both channels
+  loss_x = torch.mean(torch.sum((score_x * std[:, None, None, None] + z_x)**2, dim=(1, 2, 3)))
+  loss_y = torch.mean(torch.sum((score_y * std[:, None, None, None] + z_y)**2, dim=(1, 2, 3)))
+
+  return loss_x + loss_y
+
 
 
 # Initialize the score-based model
@@ -177,7 +211,7 @@ for epoch in tqdm_epoch:
  
 
     #y = generate_random_mask(x)
-    
+    '''
     _, bpd = ode_likelihood(x=x,
                             y=y,
                             score_model=score_model, 
@@ -188,10 +222,10 @@ for epoch in tqdm_epoch:
                             eps=1e-5)
     all_bpds += bpd.sum()
     all_items += bpd.shape[0]
-       
+      
     writer.add_scalar("Average bits/dim", all_bpds / all_items, epoch)
     #likeihood !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
+    '''
 
     
 
