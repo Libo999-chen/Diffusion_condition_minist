@@ -211,10 +211,10 @@ def ode_sampler(score_model,
       score_x = score_xy[:, 0:1, :, :]
       score_y = score_xy[:, 1:2, :, :]
 
-      std = marginal_prob_std(time_steps)[:, None, None, None]
-      std2 = std**2 + 1e-12
+      std_x = marginal_prob_std(time_steps)[:,None,None,None]
+      std_y2 = (beta * std_x)**2 + 1e-12
+      cond_grad = (y - y_t) * mask / std_y2
 
-      cond_grad = (y - y_t) * mask / std2
       score_y = score_y + cond_grad
 
       out = torch.cat([score_x, score_y], dim=1)

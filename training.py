@@ -16,7 +16,7 @@ import random
 from torch.utils.tensorboard import SummaryWriter
 base_log_dir = "/home/lc2762/Diffusion_condition/runs/conditional_inpainting"
 
-n_epochs =110  # Number of epochs
+n_epochs =20  # Number of epochs
 batch_size = 32  # Mini-batch size
 lr = 1e-4  # Learning rate
 
