@@ -16,9 +16,9 @@ import random
 from torch.utils.tensorboard import SummaryWriter
 base_log_dir = "/home/lc2762/Diffusion_condition/runs/conditional_inpainting"
 
-n_epochs =100  # Number of epochs
-batch_size = 64  # Mini-batch size
-lr = 1e-3  # Learning rate
+n_epochs =110  # Number of epochs
+batch_size = 32  # Mini-batch size
+lr = 1e-4  # Learning rate
 
 
 
@@ -111,38 +111,109 @@ def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
   
   return loss
 '''
-
+'''
 def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
-  """The loss function for training score-based generative models (Conditional / Joint).
-
-  Args:
-    model: score model, now outputs 2 channels: [B,2,H,W] = (score_x, score_y)
-    x: data image, shape [B,1,H,W]
-    y: conditioning image (will be treated as y0), shape [B,1,H,W]
-    marginal_prob_std: returns std(t), shape [B]
-    eps: numerical stability
-  """
+  # t ~ Uniform(eps, 1)
   random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
-  std = marginal_prob_std(random_t)  # [B]
+  std = marginal_prob_std(random_t)          # [B]
+  std_b = std[:, None, None, None]           # [B,1,1,1]
 
-  #  noise for x and y
+  # inpainting mask (same as training loop)
+  mask = torch.ones_like(x)
+  mask[:, :, :, 16:] = 0.
+
+  # y is y0 (observed image)
+  y0 = y * mask
+
+  # forward noising
   z_x = torch.randn_like(x)
-  z_y = torch.randn_like(y)
+  z_y = torch.randn_like(y0) * mask          # only diffuse observed region
 
-  # perturb BOTH x and y to get (x_t, y_t)
-  perturbed_x = x + z_x * std[:, None, None, None]
-  perturbed_y = y + z_y * std[:, None, None, None]
+  x_t = x  + z_x * std_b
+  y_t = y0 + z_y * std_b                     # this matches p(y_t | y0) under VE
 
-  # model outputs joint score
-  score_xy = model(perturbed_x, perturbed_y, random_t)   # [B,2,H,W]
-  score_x = score_xy[:, 0:1, :, :]
-  score_y = score_xy[:, 1:2, :, :]
+  # network output
+  score_xy = model(x_t, y_t, random_t)       # [B,2,H,W] in your current model
+  score_x  = score_xy[:, 0:1]                # only use x-component
 
-  # VE DSM loss for both channels
-  loss_x = torch.mean(torch.sum((score_x * std[:, None, None, None] + z_x)**2, dim=(1, 2, 3)))
-  loss_y = torch.mean(torch.sum((score_y * std[:, None, None, None] + z_y)**2, dim=(1, 2, 3)))
+  # DSM for x only (this is the CDiffE training target used to drive x)
+  loss_x = torch.mean(torch.sum((score_x * std_b + z_x)**2, dim=(1,2,3)))
+  return loss_x
+'''
+def loss_fn_0(model, x, y, marginal_prob_std, eps=1e-5,
+                 beta=0.3, lam_x=1.0, lam_y=0.2):
+  """
+  CMDE-style weighted joint DSM for multi-speed VE:
+    x_t = x0 + std_x z_x
+    y_t = y0 + std_y z_y, std_y = beta*std_x
+  loss = E[ lam_x ||r_x||^2 + lam_y ||r_y||^2 ] with r = score*std + z
+  """
+  t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
+  std = marginal_prob_std(t)[:, None, None, None]
+  std_x = std
+  std_y = beta * std_x
 
-  return loss_x + loss_y
+  mask = torch.ones_like(x)
+  mask[:, :, :, 16:] = 0.
+  y0 = y * mask   # y is your observed image (masked)
+
+  z_x = torch.randn_like(x)
+  z_y = torch.randn_like(y0)
+
+  x_t = x  + z_x * std_x
+  y_t = (y0 + z_y * std_y)*mask
+
+  score_xy = model(x_t, y_t, t)      # [B,2,H,W]
+  score_x = score_xy[:, 0:1]
+  score_y = score_xy[:, 1:2]
+
+  r_x = score_x * std_x + z_x
+  r_y = score_y * std_y + z_y
+
+  loss_x = torch.mean(torch.sum(lam_x * (r_x**2), dim=(1,2,3)))
+  loss_y = torch.mean(torch.sum(lam_y * ((r_y**2) * mask), dim=(1,2,3)))
+
+  return loss_x +loss_y
+
+
+
+
+def loss_fn(model, x, y, marginal_prob_std, eps=1e-5,
+            beta=0.3, lam_x=1.0, lam_y=0.2):
+    B = x.shape[0]
+    device = x.device
+    t = torch.rand(B, device=device) * (1. - eps) + eps
+
+    std_x = marginal_prob_std(t)[:, None, None, None]          # [B,1,1,1]
+    std_y = beta * std_x
+
+    # mask: observed region = 1 (left half)
+    mask = torch.ones_like(x)
+    mask[:, :, :, 16:] = 0.
+
+    y0 = y * mask
+
+    # noises (make y noise consistent with mask)
+    z_x = torch.randn_like(x)
+    z_y = torch.randn_like(y0) * mask
+
+    # forward perturb
+    x_t = x  + z_x * std_x
+    y_t = y0 + z_y * std_y
+
+    score_xy = model(x_t, y_t, t)   # [B,2,H,W]
+    score_x = score_xy[:, 0:1]
+    score_y = score_xy[:, 1:2]
+
+    r_x = score_x * std_x + z_x
+    r_y = score_y * std_y + z_y
+
+
+    loss_x = r_x.pow(2).sum(dim=(1,2,3)) 
+    loss_y = (r_y.pow(2) * mask).sum(dim=(1,2,3)) 
+
+    return (lam_x * loss_x + lam_y * loss_y).mean()
+
 
 
 
@@ -239,8 +310,8 @@ for epoch in tqdm_epoch:
     #y = generate_random_mask(x)
 
 
-    '''
-   samplefig_ode = samples_plt(score_model = score_model, 
+
+    samplefig_ode = samples_plt(score_model = score_model, 
                                 data_loader = data_loader, 
                                device = device, 
                                 sampler = ode_sampler,
@@ -249,7 +320,7 @@ for epoch in tqdm_epoch:
                                 diffusion_coeff_fn = diffusion_coeff_fn,
                                 y=y,
                                 x=x)
-    '''
+
     samplefig_pc = samples_plt(score_model = score_model, 
                                 data_loader = data_loader, 
                                 device = device, 
@@ -270,12 +341,12 @@ for epoch in tqdm_epoch:
                                 y=y,
                                 x=x)
 
-    #numpy_ode = figure_to_numpy(samplefig_ode)
+    numpy_ode = figure_to_numpy(samplefig_ode)
     numpy_pc = figure_to_numpy(samplefig_pc)
     numpy_em = figure_to_numpy(samplefig_EM)
 
    # Add to TensorBoard
-    #writer.add_image('ode Images', numpy_ode, epoch, dataformats='HWC')
+    writer.add_image('ode Images', numpy_ode, epoch, dataformats='HWC')
     writer.add_image('PC Images', numpy_pc, epoch, dataformats='HWC')
     writer.add_image('SDE Images', numpy_em, epoch, dataformats='HWC')
    
