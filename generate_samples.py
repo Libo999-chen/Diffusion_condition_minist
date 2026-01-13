@@ -3,9 +3,7 @@ import numpy as np
 import tqdm
 from scipy import integrate
 
-num_steps =  500#@param {'type':'integer'}
-
-
+num_steps =  500  #@param {'type':'integer'}
 
 def Euler_Maruyama_sampler(score_model,
                            marginal_prob_std,
@@ -20,7 +18,7 @@ def Euler_Maruyama_sampler(score_model,
   y = y.to(device)
 
   t1 = torch.ones(batch_size, device=device)
-  init_x = torch.randn(batch_size, 1, 28, 28, device=device) * marginal_prob_std(t1)[:, None, None, None]
+  init_x = torch.randn(batch_size, 3, 32, 32, device=device) * marginal_prob_std(t1)[:, None, None, None]
 
   # y_t init noise with std_y = beta * std_x
   #y_t = torch.randn_like(y) * (beta * marginal_prob_std(t1)[:, None, None, None])
@@ -47,8 +45,8 @@ def Euler_Maruyama_sampler(score_model,
       std_y2 = std_y**2 + 1e-12
 
       score_xy = score_model(x, y_t, batch_time_step)
-      score_x = score_xy[:, 0:1]
-      score_y = score_xy[:, 1:2]
+      score_x = score_xy[:, 0:3, :, :]
+      score_y = score_xy[:, 3:6, :, :]
 
       # x update
       x_mean = x + (g_x**2)[:, None, None, None] * score_x * step_size
@@ -87,7 +85,7 @@ def pc_sampler(score_model,
   std_x_1 = marginal_prob_std(t)[:, None, None, None]
   std_y_1 = beta * std_x_1
 
-  init_x = torch.randn(batch_size, 1, 28, 28, device=device) * std_x_1
+  init_x = torch.randn(batch_size, 3, 32, 32, device=device) * std_x_1
 
   x = init_x
   mask = torch.ones_like(x)
@@ -116,8 +114,8 @@ def pc_sampler(score_model,
       # Corrector (Langevin)
 
       score_xy = score_model(x, y_t, batch_time_step)    # [B,2,H,W]
-      score_x = score_xy[:, 0:1, :, :]
-      score_y = score_xy[:, 1:2, :, :]
+      score_x = score_xy[:, 0:3, :, :]
+      score_y = score_xy[:, 3:6, :, :]
 
       conditional_term_y = (y - y_t) * mask / std_y2
 
@@ -141,8 +139,8 @@ def pc_sampler(score_model,
 
       # Predictor (EM)
       score_xy = score_model(x, y_t, batch_time_step)
-      score_x = score_xy[:, 0:1, :, :]
-      score_y = score_xy[:, 1:2, :, :]
+      score_x = score_xy[:, 0:3, :, :]
+      score_y = score_xy[:, 3:6, :, :]
 
       conditional_term_y = (y - y_t) * mask / std_y2
 
@@ -177,7 +175,7 @@ def ode_sampler(score_model,
 
   # init x at t=1
   if z is None:
-    init_x = torch.randn(batch_size, 1, 28, 28, device=device) * marginal_prob_std(t)[:, None, None, None]
+    init_x = torch.randn(batch_size, 3, 32, 32, device=device) * marginal_prob_std(t)[:, None, None, None]
   else:
     init_x = z
 
@@ -191,14 +189,16 @@ def ode_sampler(score_model,
   y = y * mask
   init_y = (y + torch.randn_like(y) * (beta * marginal_prob_std(t)[:, None, None, None]) * mask) * mask
 
-
+  # print(init_x.shape, init_y.shape)
   init_xy = torch.cat([init_x, init_y], dim=1)
   shape = init_xy.shape
 
   def score_eval_wrapper(sample, time_steps):
+    # print("Sample shape in score eval:", sample.shape)
     sample = torch.tensor(sample, device=device, dtype=torch.float32).reshape(shape)
-    x_t = sample[:, 0:1, :, :]
-    y_t = sample[:, 1:2, :, :]
+    # print("Sample shape in score eval:", sample.shape)
+    x_t = sample[:, 0:3, :, :]
+    y_t = sample[:, 3:6, :, :]
 
     time_steps = torch.tensor(time_steps, device=device, dtype=torch.float32).reshape((shape[0],))
 
@@ -207,14 +207,15 @@ def ode_sampler(score_model,
 
 
     with torch.no_grad():
+      # print("shapes of x_t, y_t, time_steps:", x_t.shape, y_t.shape)
       score_xy = score_model(x_t, y_t, time_steps)
-      score_x = score_xy[:, 0:1, :, :]
-      score_y = score_xy[:, 1:2, :, :]
+      score_x = score_xy[:, 0:3, :, :]
+      score_y = score_xy[:, 3:6, :, :]
 
-      std = marginal_prob_std(time_steps)[:, None, None, None]
-      std2 = std**2 + 1e-12
-
-      cond_grad = (y - y_t) * mask / std2
+      std_x = marginal_prob_std(time_steps)[:,None,None,None]
+      std_y2 = (beta * std_x)**2 + 1e-12
+      cond_grad = (y - y_t) * mask / std_y2
+      # print("cond_grad shape:", score_y.shape, cond_grad.shape)
       score_y = score_y + cond_grad
 
       out = torch.cat([score_x, score_y], dim=1)
@@ -237,11 +238,11 @@ def ode_sampler(score_model,
     g_y2 = (beta**2) * g_x2
 
     drift = score_eval_wrapper(x_flat, time_steps)  # flattened [B*2*H*W]
-    drift = drift.reshape(shape[0], 2, shape[2], shape[3])  # [B,2,H,W]
+    drift = drift.reshape(shape[0], 6, shape[2], shape[3])  # [B,6,H,W]
 
 
-    drift[:, 0:1, :, :] *= (-0.5 * g_x2)
-    drift[:, 1:2, :, :] *= (-0.5 * g_y2)
+    drift[:, 0:3, :, :] *= (-0.5 * g_x2)
+    drift[:, 3:6, :, :] *= (-0.5 * g_y2)
 
 
     return drift.reshape((-1,)).astype(np.float64)
@@ -259,7 +260,8 @@ def ode_sampler(score_model,
   xy = torch.tensor(res.y[:, -1], device=device, dtype=torch.float32).reshape(shape)
 
   # (optional but safe) project y channel back to mask after solve
-  xy[:, 1:2, :, :] = xy[:, 1:2, :, :] * mask
+  xy[:, 3:6, :, :] = xy[:, 3:6, :, :] * mask
 
-  x = xy[:, 0:1, :, :]
+  x = xy[:, 0:3, :, :]
   return x
+

@@ -49,30 +49,30 @@ class ScoreNet(nn.Module):
     self.embed = nn.Sequential(GaussianFourierProjection(embed_dim=embed_dim),
          nn.Linear(embed_dim, embed_dim))
     # Encoding layers where the resolution decreases
-    self.conv1 = nn.Conv2d(2, channels[0], 3, stride=1, bias=False)   #changed here 3 times 3 kenel
+    self.conv1 = nn.Conv2d(6, channels[0], 3, stride=1, padding = 1, bias=False)   #changed here 3 times 3 kenel
     self.dense1 = Dense(embed_dim, channels[0])
     self.gnorm1 = nn.GroupNorm(4, num_channels=channels[0]) # channels[0] = 64, then each group has 16 
-    self.conv2 = nn.Conv2d(channels[0], channels[1], 3, stride=2, bias=False)  #if stride=1, moves 1 pixel at a time
+    self.conv2 = nn.Conv2d(channels[0], channels[1], 3, stride=2, padding = 1, bias=False)  #if stride=1, moves 1 pixel at a time
     self.dense2 = Dense(embed_dim, channels[1])
     self.gnorm2 = nn.GroupNorm(32, num_channels=channels[1])
-    self.conv3 = nn.Conv2d(channels[1], channels[2], 3, stride=2, bias=False)
+    self.conv3 = nn.Conv2d(channels[1], channels[2], 3, stride=2,padding = 1, bias=False)
     self.dense3 = Dense(embed_dim, channels[2])
     self.gnorm3 = nn.GroupNorm(32, num_channels=channels[2])
-    self.conv4 = nn.Conv2d(channels[2], channels[3], 3, stride=2, bias=False)
+    self.conv4 = nn.Conv2d(channels[2], channels[3], 3, stride=2, padding = 1, bias=False)
     self.dense4 = Dense(embed_dim, channels[3])
     self.gnorm4 = nn.GroupNorm(32, num_channels=channels[3])
 
     # Decoding layers where the resolution increases
-    self.tconv4 = nn.ConvTranspose2d(channels[3], channels[2], 3, stride=2, bias=False)
+    self.tconv4 = nn.ConvTranspose2d(channels[3], channels[2], 3, stride=2,padding = 1, output_padding=1, bias=False)
     self.dense5 = Dense(embed_dim, channels[2])
     self.tgnorm4 = nn.GroupNorm(32, num_channels=channels[2])
-    self.tconv3 = nn.ConvTranspose2d(channels[2] + channels[2], channels[1], 3, stride=2, bias=False, output_padding=1)
+    self.tconv3 = nn.ConvTranspose2d(channels[2] + channels[2], channels[1], 3, stride=2, padding = 1, bias=False, output_padding=1)
     self.dense6 = Dense(embed_dim, channels[1])
     self.tgnorm3 = nn.GroupNorm(32, num_channels=channels[1])
-    self.tconv2 = nn.ConvTranspose2d(channels[1] + channels[1], channels[0], 3, stride=2, bias=False, output_padding=1)
+    self.tconv2 = nn.ConvTranspose2d(channels[1] + channels[1], channels[0], 4, stride=2, padding = 1, bias=False)
     self.dense7 = Dense(embed_dim, channels[0])
     self.tgnorm2 = nn.GroupNorm(32, num_channels=channels[0])
-    self.tconv1 = nn.ConvTranspose2d(channels[0] + channels[0], 2, 3, stride=1)
+    self.tconv1 = nn.ConvTranspose2d(channels[0] + channels[0], 6, 3, stride=1, padding = 1)
 
     # The swish activation function
     self.act = lambda x: x * torch.sigmoid(x)
@@ -108,6 +108,7 @@ class ScoreNet(nn.Module):
     h += self.dense5(embed)
     h = self.tgnorm4(h)
     h = self.act(h)
+    # print(h.shape, h3.shape)
     h = self.tconv3(torch.cat([h, h3], dim=1))
     h += self.dense6(embed)
     h = self.tgnorm3(h)
@@ -116,6 +117,7 @@ class ScoreNet(nn.Module):
     h += self.dense7(embed)
     h = self.tgnorm2(h)
     h = self.act(h)
+    # print(h.shape, h1.shape)
     h = self.tconv1(torch.cat([h, h1], dim=1))
 
     # Normalize output

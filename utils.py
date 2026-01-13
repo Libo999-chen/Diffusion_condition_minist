@@ -48,28 +48,29 @@ diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
 
 
 
-def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
-  """The loss function for training score-based generative models (Conditional).
+# def loss_fn(model, x, y, marginal_prob_std, eps=1e-5):
+#   """The loss function for training score-based generative models (Conditional).
 
-  Args:
-    model: A PyTorch model instance that represents a 
-      time-dependent score-based model.
-    x: A mini-batch of training data.
-    y: The conditioning variable (e.g., labels, features).
-    marginal_prob_std: A function that gives the standard deviation of 
-      the perturbation kernel.
-    eps: A tolerance value for numerical stability.
-  """
+#   Args:
+#     model: A PyTorch model instance that represents a 
+#       time-dependent score-based model.
+#     x: A mini-batch of training data.
+#     y: The conditioning variable (e.g., labels, features).
+#     marginal_prob_std: A function that gives the standard deviation of 
+#       the perturbation kernel.
+#     eps: A tolerance value for numerical stability.
+#   """
   
-  random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
+#   random_t = torch.rand(x.shape[0], device=x.device) * (1. - eps) + eps
   
-  z = torch.randn_like(x)
-  std = marginal_prob_std(random_t)
-  perturbed_x = x + z * std[:, None, None, None]
-  score = model(perturbed_x, y, random_t)
-  loss = torch.mean(torch.sum((score * std[:, None, None, None] + z)**2, dim=(1, 2, 3)))
+#   z = torch.randn_like(x)
+#   std = marginal_prob_std(random_t)
+#   perturbed_x = x + z * std[:, None, None, None]
+#   score = model(perturbed_x, y, random_t)
+#   print(score.shape, z.shape, std.shape)
+#   loss = torch.mean(torch.sum((score * std[:, None, None, None] + z)**2, dim=(1, 2, 3)))
   
-  return loss
+#   return loss
 
 
 

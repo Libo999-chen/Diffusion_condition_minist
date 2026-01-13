@@ -11,32 +11,42 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import numpy as np
 import random
-
-
+import torchvision.transforms as transforms
+from torchvision.datasets import MNIST
+from torch.utils.data import DataLoader
+from torchvision.datasets import CIFAR10
 from torch.utils.tensorboard import SummaryWriter
-base_log_dir = "/home/lc2762/Diffusion_condition/runs/conditional_inpainting"
+base_log_dir = "runs/conditional_inpainting"
 
-n_epochs =110  # Number of epochs
+n_epochs =2000  # Number of epochs
 batch_size = 32  # Mini-batch size
 lr = 1e-4  # Learning rate
 
 
 
-run_name = f"lr_{lr:.0e}_{n_epochs}_epochs_batch_size_{batch_size}"
+run_name = f"lr_{lr:.0e}_{n_epochs}_epochs_batch_size_{batch_size}_cifar1"
 log_dir = f"{base_log_dir}/{run_name}"
 writer = SummaryWriter(log_dir=log_dir)
 
+# def figure_to_numpy(fig):
+#     """Convert a matplotlib figure to a NumPy array."""
+#     canvas = FigureCanvas(fig)
+#     canvas.draw()
+#     buf = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8)
+#     width, height = fig.get_size_inches() * fig.get_dpi()
+#     return buf.reshape(int(height), int(width), 3)
+
 def figure_to_numpy(fig):
-    """Convert a matplotlib figure to a NumPy array."""
-    canvas = FigureCanvas(fig)
-    canvas.draw()
-    buf = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8)
-    width, height = fig.get_size_inches() * fig.get_dpi()
-    return buf.reshape(int(height), int(width), 3)
+    fig.canvas.draw()
+    buf = np.asarray(fig.canvas.buffer_rgba())
+    # Drop alpha channel → RGBA → RGB
+    buf = buf[..., :3]
+    return buf
+
 
 
 device = 'cuda'  # Param for device type ('cuda' or 'cpu')
-def marginal_prob_std(t, sigma): 
+def marginal_prob_std(t, sigma):
     """Compute the mean and standard deviation of $p_{0t}(x(t) | x(0))$.
     
     Args:
@@ -202,8 +212,8 @@ def loss_fn(model, x, y, marginal_prob_std, eps=1e-5,
     y_t = y0 + z_y * std_y
 
     score_xy = model(x_t, y_t, t)   # [B,2,H,W]
-    score_x = score_xy[:, 0:1]
-    score_y = score_xy[:, 1:2]
+    score_x = score_xy[:, 0:3]
+    score_y = score_xy[:, 3:6]
 
     r_x = score_x * std_x + z_x
     r_y = score_y * std_y + z_y
@@ -224,10 +234,51 @@ score_model = score_model.to(device)
 
 
 # Dataset and DataLoader
-dataset = MNIST('.', train=True, transform=transforms.ToTensor(), download=True)
-data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4) #the number of subprocesses used to load data.
+# dataset = MNIST('.', train=True, transform=transforms.ToTensor(), download=True)
+# data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4) #the number of subprocesses used to load data.
+# transform = transforms.ToTensor()
 
-val_data = dataset.data[:1].unsqueeze(1)
+# transform = transforms.Compose([
+#     transforms.Resize(32),               # 28×28 → 32×32
+#     transforms.Grayscale(num_output_channels=3),  # 1 → 3 channels
+#     transforms.ToTensor(),                # [0,255] → [0,1]
+# ])
+
+# dataset = MNIST(
+#     root='.',
+#     train=True,
+#     transform=transform,
+#     download=True
+# )
+
+# data_loader = DataLoader(
+#     dataset,
+#     batch_size=batch_size,
+#     shuffle=True,
+#     num_workers=4,
+#     pin_memory=True
+# )
+
+
+dataset = CIFAR10(
+    root='.',
+    train=True,
+    transform=transforms.ToTensor(),
+    download=True
+)
+
+data_loader = DataLoader(
+    dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=4,
+    pin_memory=True
+)
+
+
+# val_data = dataset.data[:1].unsqueeze(1)
+val_data, _ = dataset[0]   # already tensor [3,32,32]
+val_data = val_data.unsqueeze(0).to(device)
 
 # Optimizer
 optimizer = Adam(score_model.parameters(), lr=lr)
@@ -354,7 +405,7 @@ for epoch in tqdm_epoch:
 
 
 
-torch.save(score_model.state_dict(), f'/home/lc2762/Diffusion_condition/run_model_history/lr_{lr:.0e}_n_epochs_{n_epochs}_batch_size_{batch_size}.pth')
+torch.save(score_model.state_dict(), f'ckpt/lr_{lr:.0e}_n_epochs_{n_epochs}_batch_size_{batch_size}.pth')
 
 writer.close()
 
