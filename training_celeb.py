@@ -13,23 +13,26 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import numpy as np
 import random
+import os
 import torchvision.transforms as transforms
-from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10
 from torch.utils.tensorboard import SummaryWriter
+from dataset1 import CelebADataset
+import torch.optim as optim
+
 base_log_dir = "runs/conditional_inpainting"
 
 n_epochs =2000  # Number of epochs
-batch_size = 24  # Mini-batch size
+batch_size = 64  # Mini-batch size
 lr = 2e-4  # Learning rate
 
 
 
-run_name = f"lr_{lr:.0e}_{n_epochs}_epochs_batch_size_{batch_size}_cifar_newmask1"
+run_name = f"lr_{lr:.0e}_{n_epochs}_epochs_batch_size_{batch_size}_celeba_newmask2"
+
 log_dir = f"{base_log_dir}/{run_name}"
 writer = SummaryWriter(log_dir=log_dir)
-
+os.makedirs(f'ckpt/{run_name}', exist_ok=True)
 # def figure_to_numpy(fig):
 #     """Convert a matplotlib figure to a NumPy array."""
 #     canvas = FigureCanvas(fig)
@@ -167,64 +170,65 @@ def loss_fn(model, x, y, mask, marginal_prob_std, eps=1e-5,
 score_model = torch.nn.DataParallel(RobustScoreNet(marginal_prob_std=marginal_prob_std_fn))
 score_model = score_model.to(device)
 
+transform = transforms.Compose([
+    transforms.Lambda(lambda img: transforms.functional.crop(img, top=39, left=9, height=160, width=160)),
+    transforms.Resize(128),  # Resize to 32x32 to match your model
+    transforms.ToTensor(),  # Convert to [0, 1] range
+])
+celeba_root = '/ssd_scratch/cvit/souvik/CelebA/CelebA/Img/img_align_celeba'
+split_file = "/ssd_scratch/cvit/souvik/CelebA/CelebA/Eval/list_eval_partition.txt"
 
+train_dataset = CelebADataset(
+    root_dir=celeba_root,
+    split_file=split_file,
+    split="train",
+    transform=transform
+)
 
-# Dataset and DataLoader
-# dataset = MNIST('.', train=True, transform=transforms.ToTensor(), download=True)
-# data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4) #the number of subprocesses used to load data.
-# transform = transforms.ToTensor()
-
-# transform = transforms.Compose([
-#     transforms.Resize(32),               # 28×28 → 32×32
-#     transforms.Grayscale(num_output_channels=3),  # 1 → 3 channels
-#     transforms.ToTensor(),                # [0,255] → [0,1]
-# ])
-
-# dataset = MNIST(
-#     root='.',
-#     train=True,
-#     transform=transform,
-#     download=True
-# )
-
-# data_loader = DataLoader(
-#     dataset,
-#     batch_size=batch_size,
-#     shuffle=True,
-#     num_workers=4,
-#     pin_memory=True
-# )
-
-
-dataset = CIFAR10(
-    root='.',
-    train=True,
-    transform=transforms.ToTensor(),
-    download=True
+val_dataset = CelebADataset(
+    root_dir=celeba_root,
+    split_file=split_file,
+    split="test",
+    transform=transform
 )
 
 data_loader = DataLoader(
-    dataset,
+    train_dataset,
     batch_size=batch_size,
     shuffle=True,
     num_workers=9,
     pin_memory=True
 )
 
-
-# val_data = dataset.data[:1].unsqueeze(1)
-val_data, _ = dataset[0]   # already tensor [3,32,32]
-val_data = val_data.unsqueeze(0).to(device)
+val_data_loader = DataLoader(
+    val_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=9,
+    pin_memory=True
+)
 
 # Optimizer
-optimizer = Adam(score_model.parameters(), lr=lr)
+# optimizer = Adam(score_model.parameters(), lr=lr)
+
+optimizer = optim.AdamW(score_model.parameters(), lr=2e-4, weight_decay=1e-4)
+
+def get_lr_lambda(warmup_steps):
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return 1.0
+    return lr_lambda
+
+warmup_steps = 5000
+scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=get_lr_lambda(warmup_steps))
 
 # Training loop
 tqdm_epoch = tqdm.trange(n_epochs)
 for epoch in tqdm_epoch:
     avg_loss = 0.
     num_items = 0
-
+    score_model.train()
     
     for x, _ in tqdm1(data_loader):  # We ignore the original labels from MNIST
         x = x.to(device)        
@@ -239,6 +243,7 @@ for epoch in tqdm_epoch:
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step()
         avg_loss += loss.item() * x.shape[0]
         num_items += x.shape[0]
 
@@ -246,90 +251,65 @@ for epoch in tqdm_epoch:
 
     #likeihood !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     all_bpds = 0.
-    all_items = 0   
+    all_items = 0
+    if epoch % 5 == 0:
+        score_model.eval()
+        with torch.no_grad():
 
-    # x=val_data
-    # x = x.to(device)
-  
-    # mask = torch.ones_like(x)
-    # mask[:, :, :, 16:] = 0. 
-    # y = x * mask 
- 
-    #y = generate_random_mask(x)
-    '''
-    _, bpd = ode_likelihood(x=x,
-                            y=y,
-                            score_model=score_model, 
-                            marginal_prob_std=marginal_prob_std_fn,
-                            diffusion_coeff=diffusion_coeff_fn,
-                            batch_size=batch_size, 
-                            device=device, 
-                            eps=1e-5)
-    all_bpds += bpd.sum()
-    all_items += bpd.shape[0]
-      
-    writer.add_scalar("Average bits/dim", all_bpds / all_items, epoch)
-    #likeihood !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    '''
+            x = next(iter(val_data_loader))[0]
+            x = x.to(device)
+            mask = generate_random_square_mask(x, mask_ratio=0.25)
+            y = x * mask 
 
-    x = next(iter(data_loader))[0]
-    x = x.to(device)
-    # mask = torch.ones_like(x)
-    # mask[:, :, :, 16:] = 0. 
-    mask = generate_random_square_mask(x, mask_ratio=0.25)
-    y = x * mask 
-    
-    #y = generate_random_mask(x)
+            samplefig_ode = samples_plt(score_model = score_model, 
+                                        data_loader = data_loader, 
+                                    device = device, 
+                                        sampler = ode_sampler,
+                                        sample_batch_size = batch_size, 
+                                        marginal_prob_std_fn = marginal_prob_std_fn, 
+                                        diffusion_coeff_fn = diffusion_coeff_fn,
+                                        y=y,
+                                        x=x,
+                                        mask = mask)
 
+            samplefig_pc = samples_plt(score_model = score_model, 
+                                        data_loader = data_loader, 
+                                        device = device, 
+                                        sampler = pc_sampler,
+                                        sample_batch_size = batch_size, 
+                                        marginal_prob_std_fn = marginal_prob_std_fn, 
+                                        diffusion_coeff_fn = diffusion_coeff_fn,
+                                        y=y,
+                                        x=x,
+                                        mask = mask)
 
+            samplefig_EM = samples_plt(score_model = score_model, 
+                                        data_loader = data_loader, 
+                                        device = device, 
+                                        sampler = Euler_Maruyama_sampler,
+                                        sample_batch_size = batch_size, 
+                                        marginal_prob_std_fn = marginal_prob_std_fn, 
+                                        diffusion_coeff_fn = diffusion_coeff_fn,
+                                        y=y,
+                                        x=x,
+                                        mask = mask)
 
-    samplefig_ode = samples_plt(score_model = score_model, 
-                                data_loader = data_loader, 
-                               device = device, 
-                                sampler = ode_sampler,
-                                sample_batch_size = batch_size, 
-                                marginal_prob_std_fn = marginal_prob_std_fn, 
-                                diffusion_coeff_fn = diffusion_coeff_fn,
-                                y=y,
-                                x=x,
-                                mask = mask)
+            numpy_ode = figure_to_numpy(samplefig_ode)
+            numpy_pc = figure_to_numpy(samplefig_pc)
+            numpy_em = figure_to_numpy(samplefig_EM)
 
-    samplefig_pc = samples_plt(score_model = score_model, 
-                                data_loader = data_loader, 
-                                device = device, 
-                                sampler = pc_sampler,
-                                sample_batch_size = batch_size, 
-                                marginal_prob_std_fn = marginal_prob_std_fn, 
-                                diffusion_coeff_fn = diffusion_coeff_fn,
-                                y=y,
-                                x=x,
-                                mask = mask)
-
-    samplefig_EM = samples_plt(score_model = score_model, 
-                                data_loader = data_loader, 
-                                device = device, 
-                                sampler = Euler_Maruyama_sampler,
-                                sample_batch_size = batch_size, 
-                                marginal_prob_std_fn = marginal_prob_std_fn, 
-                                diffusion_coeff_fn = diffusion_coeff_fn,
-                                y=y,
-                                x=x,
-                                mask = mask)
-
-    numpy_ode = figure_to_numpy(samplefig_ode)
-    numpy_pc = figure_to_numpy(samplefig_pc)
-    numpy_em = figure_to_numpy(samplefig_EM)
-
-   # Add to TensorBoard
-    writer.add_image('ode Images', numpy_ode, epoch, dataformats='HWC')
-    writer.add_image('PC Images', numpy_pc, epoch, dataformats='HWC')
-    writer.add_image('SDE Images', numpy_em, epoch, dataformats='HWC')
-   
-    tqdm_epoch.set_description('Average Loss: {:5f}'.format(avg_loss / num_items))
-
-
-
-torch.save(score_model.state_dict(), f'ckpt/lr_{lr:.0e}_n_epochs_{n_epochs}_batch_size_{batch_size}.pth')
+        # Add to TensorBoard
+            writer.add_image('ode Images', numpy_ode, epoch, dataformats='HWC')
+            writer.add_image('PC Images', numpy_pc, epoch, dataformats='HWC')
+            writer.add_image('SDE Images', numpy_em, epoch, dataformats='HWC')
+        
+            tqdm_epoch.set_description('Average Loss: {:5f}'.format(avg_loss / num_items))
+            torch.save({
+                'model_state_dict': score_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(), # Saves the current step counter
+                'epoch': epoch
+            }, f'ckpt/{run_name}/epoch_{epoch}.pth')
 
 writer.close()
 

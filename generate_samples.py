@@ -10,6 +10,7 @@ def Euler_Maruyama_sampler(score_model,
                            diffusion_coeff,
                            y,  # y0 fixed (masked image)
                            batch_size,
+                           mask,
                            num_steps=500,
                            device='cuda',
                            eps=1e-3):
@@ -18,14 +19,14 @@ def Euler_Maruyama_sampler(score_model,
   y = y.to(device)
 
   t1 = torch.ones(batch_size, device=device)
-  init_x = torch.randn(batch_size, 3, 32, 32, device=device) * marginal_prob_std(t1)[:, None, None, None]
+  init_x = torch.randn(batch_size, 3, 128, 128, device=device) * marginal_prob_std(t1)[:, None, None, None]
 
   # y_t init noise with std_y = beta * std_x
   #y_t = torch.randn_like(y) * (beta * marginal_prob_std(t1)[:, None, None, None])
   x = init_x
 
-  mask = torch.ones_like(x)
-  mask[:, :, :, 16:] = 0.
+  # mask = torch.ones_like(x)
+  # mask[:, :, :, 16:] = 0.
   y_t = (y + torch.randn_like(y) * (beta * marginal_prob_std(t1)[:, None, None, None]) * mask) * mask
 
   time_steps = torch.linspace(1., eps, num_steps, device=device)
@@ -71,6 +72,7 @@ def pc_sampler(score_model,
                diffusion_coeff,
                y,  # y0 (fixed)
                batch_size, 
+               mask,
                num_steps=500, 
                snr=0.16,                
                device='cuda',
@@ -85,11 +87,11 @@ def pc_sampler(score_model,
   std_x_1 = marginal_prob_std(t)[:, None, None, None]
   std_y_1 = beta * std_x_1
 
-  init_x = torch.randn(batch_size, 3, 32, 32, device=device) * std_x_1
+  init_x = torch.randn(batch_size, 3, 128, 128, device=device) * std_x_1
 
   x = init_x
-  mask = torch.ones_like(x)
-  mask[:, :, :, 16:] = 0.
+  # mask = torch.ones_like(x)
+  # mask[:, :, :, 16:] = 0.
 
   # make y consistent with mask & init y_t from y + noise (only on mask) 
   y = y * mask
@@ -163,7 +165,8 @@ def ode_sampler(score_model,
                 marginal_prob_std,
                 diffusion_coeff,
                 y,  # y0 (fixed)
-                batch_size, 
+                batch_size,
+                mask,
                 atol=1e-5, 
                 rtol=1e-5, 
                 device='cuda', 
@@ -175,15 +178,15 @@ def ode_sampler(score_model,
 
   # init x at t=1
   if z is None:
-    init_x = torch.randn(batch_size, 3, 32, 32, device=device) * marginal_prob_std(t)[:, None, None, None]
+    init_x = torch.randn(batch_size, 3, 128, 128, device=device) * marginal_prob_std(t)[:, None, None, None]
   else:
     init_x = z
 
   beta = 0.3
 
   # same mask as your inpainting setup
-  mask = torch.ones_like(init_x)
-  mask[:, :, :, 16:] = 0.
+  # mask = torch.ones_like(init_x)
+  # mask[:, :, :, 16:] = 0.
 
   #  make y masked + init_y consistent with training
   y = y * mask

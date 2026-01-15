@@ -74,7 +74,7 @@ diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
 
 
 
-def samples_plt(score_model, data_loader, device, sampler, sample_batch_size, marginal_prob_std_fn, diffusion_coeff_fn,y,x):
+def samples_plt(score_model, data_loader, device, sampler, sample_batch_size, marginal_prob_std_fn, diffusion_coeff_fn,y,x, mask):
     """
     Generates and visualizes samples using a specified sampler.
 
@@ -94,7 +94,8 @@ def samples_plt(score_model, data_loader, device, sampler, sample_batch_size, ma
                       diffusion_coeff = diffusion_coeff_fn,
                       y = y,  # Pass the conditional input `y`
                       batch_size = sample_batch_size,
-                      device = device)
+                      device = device,
+                      mask = mask)
 
     # Clamp the values to ensure they are within the range [0, 1]
     samples = samples.clamp(0.0, 1.0)
